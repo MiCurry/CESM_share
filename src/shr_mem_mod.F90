@@ -11,6 +11,7 @@ MODULE shr_mem_mod
 
   public ::  shr_mem_getusage, &
        shr_mem_init
+  public :: record_memusage
 
   ! PUBLIC: Public interfaces
 
@@ -85,6 +86,79 @@ CONTAINS
   end subroutine shr_mem_init
 
   !===============================================================================
+
+  ! Get an IO unit that is currently not opened for writing/reading
+  subroutine get_new_unit(new_unit)
+
+      implicit none
+
+      integer, intent(out) :: new_unit
+      integer, parameter :: max_units = 99
+      integer :: i
+      logical :: opened
+
+      do i = 1, max_units
+          inquire(i, opened=opened)
+          if (opened) then
+              new_unit = i
+              return
+          end if
+      end do
+
+  end subroutine get_new_unit
+
+  ! Given a filename, create a file, fname, and gather memory statistics from shr_mem_getusage
+  ! across all processors and have the master proc record all them as a CSV file.
+  subroutine record_memusage(fname)
+
+      use mpi, only : MPI_Gather, MPI_REAL8
+      use spmd_utils, only : masterprocid, masterproc, npes
+
+      implicit none
+
+      character(len=*), intent(in) :: fname
+
+      real(r8) :: mem_hw
+      real(r8) :: mem
+      real(r8), dimension(:), allocatable :: arry_mem_hw
+      real(r8), dimension(:), allocatable :: arry_mem
+      integer :: i, ierr
+      integer :: output_unit
+
+      call shr_mem_getusage(mem_hw, mem)
+
+      if (masterproc) then
+          write(iulog,*) "recrod_memusage: opening and writing memusage csv files ..."
+          call get_new_unit(output_unit)
+          open(file=fname, unit=output_unit)
+          allocate(arry_mem_hw(npes))
+          allocate(arry_mem(npes))
+      end if
+
+      if (masterproc) then ! Writer CSV headers
+          ! Write CSV headers ..
+          write(output_unit,*) "ncpu,", "mem_hw,","mem,"
+      end if
+
+      call MPI_Gather(mem_hw, 1, MPI_REAL8, arry_mem_hw, 1, MPI_REAL8, masterprocid, mpicom, ierr)
+      call MPI_Gather(mem, 1, MPI_REAL8, arry_mem, 1, MPI_REAL8, masterprocid, mpicom, ierr)
+
+      if (masterproc) then
+          ! Write output..
+          do i = 1, npes
+              write(output_unit, '(I10,A,F15.1,A,F15.1,A)') i, ',', arry_mem_hw(i), ',', arry_mem(i), ','
+              if (mod(i, 36) == 0) then
+                  write(output_unit, *) ", , ,"
+              end if
+          end do
+
+          close(unit=output_unit)
+          deallocate(arry_mem_hw)
+          deallocate(arry_mem)
+          write(iulog,*) "recrod_memusage: finished!"
+      end if
+
+  end subroutine record_memusage
 
   subroutine shr_mem_getusage(r_msize,r_mrss,prt)
 
