@@ -87,6 +87,30 @@ CONTAINS
 
   !===============================================================================
 
+  subroutine get_mpi_info(mpicom, masterprocid, masterproc, npes)
+
+     use mpi, only: mpi_comm_rank, mpi_comm_size
+
+     integer, intent(in) :: mpicom
+     integer, intent(out) :: masterprocid
+     logical, intent(out) :: masterproc
+     integer, intent(out) :: npes
+     integer :: iam
+     integer :: ierr
+
+     call mpi_comm_rank(mpicom, iam, ierr)
+     call mpi_comm_size(mpicom, npes, ierr)
+
+     if (iam == 0) then
+         masterproc = .true.
+     else
+         masterproc = .false.
+     endif
+
+     masterprocid = 0
+
+  end subroutine get_mpi_info
+
   ! Get an IO unit that is currently not opened for writing/reading
   subroutine get_new_unit(new_unit)
 
@@ -109,26 +133,30 @@ CONTAINS
 
   ! Given a filename, create a file, fname, and gather memory statistics from shr_mem_getusage
   ! across all processors and have the master proc record all them as a CSV file.
-  subroutine record_memusage(fname)
+  subroutine record_memusage(mpicom, fname)
 
       use mpi, only : MPI_Gather, MPI_REAL8
-      use spmd_utils, only : masterprocid, masterproc, npes
 
       implicit none
 
+      integer, intent(in) :: mpicom
       character(len=*), intent(in) :: fname
 
-      real(r8) :: mem_hw
-      real(r8) :: mem
-      real(r8), dimension(:), allocatable :: arry_mem_hw
-      real(r8), dimension(:), allocatable :: arry_mem
+      real(shr_kind_r8) :: mem_hw
+      real(shr_kind_r8) :: mem
+      real(shr_kind_r8), dimension(:), allocatable :: arry_mem_hw
+      real(shr_kind_r8), dimension(:), allocatable :: arry_mem
+      logical :: masterproc
+      integer :: masterprocid
+      integer :: npes
       integer :: i, ierr
       integer :: output_unit
+
+      call get_mpi_info(mpicom, masterprocid, masterproc, npes)
 
       call shr_mem_getusage(mem_hw, mem)
 
       if (masterproc) then
-          write(iulog,*) "recrod_memusage: opening and writing memusage csv files ..."
           call get_new_unit(output_unit)
           open(file=fname, unit=output_unit)
           allocate(arry_mem_hw(npes))
@@ -155,7 +183,6 @@ CONTAINS
           close(unit=output_unit)
           deallocate(arry_mem_hw)
           deallocate(arry_mem)
-          write(iulog,*) "recrod_memusage: finished!"
       end if
 
   end subroutine record_memusage
